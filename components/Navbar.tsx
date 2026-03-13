@@ -11,24 +11,43 @@ export default function Navbar() {
   const [scrolled, setScrolled] = useState(false);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
 
+  const syncUserFromStorage = () => {
+    try {
+      const userData = localStorage.getItem("user");
+      setUser(userData ? JSON.parse(userData) : null);
+    } catch {
+      setUser(null);
+    }
+  };
+
   useEffect(() => {
     const handleScroll = () => {
       setScrolled(window.scrollY > 20);
     };
     window.addEventListener("scroll", handleScroll);
+    syncUserFromStorage();
 
-    const userData = localStorage.getItem("user");
-    if (userData) {
-      setUser(JSON.parse(userData));
-    }
+    const handleAuthChanged = () => syncUserFromStorage();
+    window.addEventListener("auth-changed", handleAuthChanged as EventListener);
+    window.addEventListener("focus", handleAuthChanged);
     
-    return () => window.removeEventListener("scroll", handleScroll);
+    return () => {
+      window.removeEventListener("scroll", handleScroll);
+      window.removeEventListener("auth-changed", handleAuthChanged as EventListener);
+      window.removeEventListener("focus", handleAuthChanged);
+    };
   }, []);
+
+  useEffect(() => {
+    // Re-sync on navigation (same-tab localStorage changes don't fire `storage` events)
+    syncUserFromStorage();
+  }, [pathname]);
 
   const handleLogout = () => {
     localStorage.removeItem("token");
     localStorage.removeItem("user");
     setUser(null);
+    window.dispatchEvent(new Event("auth-changed"));
     router.push("/login");
   };
 

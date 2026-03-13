@@ -26,6 +26,9 @@ import {
 import Link from "next/link";
 import ResultChart from "@/components/ResultChart";
 
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000/api";
+
+
 export default function AdminDashboard() {
   const [stats, setStats] = useState<any>({
     totalVoters: 0,
@@ -37,9 +40,9 @@ export default function AdminDashboard() {
     electionTitle: "Fetching Data...",
     recentLogs: []
   });
-  const [elections, setElections] = useState([]);
-  const [voters, setVoters] = useState([]);
-  const [logs, setLogs] = useState([]);
+  const [elections, setElections] = useState<any[]>([]);
+  const [voters, setVoters] = useState<any[]>([]);
+  const [logs, setLogs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   
   // Modal states
@@ -52,26 +55,27 @@ export default function AdminDashboard() {
     try {
       const token = localStorage.getItem("token");
       
-      // Fetch Stats (includes chart data and recent logs)
-      const statsRes = await fetch("http://localhost:5000/api/admin/stats", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const statsData = await statsRes.json();
-      setStats(statsData);
+      const [statsData, electionsData, votersData] = await Promise.all([
+        fetch(`${API_URL}/admin/stats`, { headers: { Authorization: `Bearer ${token}` } }).then(r => r.json()),
+        fetch(`${API_URL}/admin/elections`, { headers: { Authorization: `Bearer ${token}` } }).then(r => r.json()),
+        fetch(`${API_URL}/admin/voters`, { headers: { Authorization: `Bearer ${token}` } }).then(r => r.json()),
+      ]);
 
-      // Fetch Elections
-      const electionsRes = await fetch("http://localhost:5000/api/voter/elections", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const electionsData = await electionsRes.json();
-      setElections(electionsData);
-
-      // Fetch Voters
-      const votersRes = await fetch("http://localhost:5000/api/admin/voters", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const votersData = await votersRes.json();
-      setVoters(votersData);
+      // Be resilient to API errors / shape changes
+      setStats((prev: any) => ({
+        ...prev,
+        ...(statsData && typeof statsData === "object" ? statsData : {}),
+        totalVoters: Number(statsData?.totalVoters ?? 0),
+        votesCast: Number(statsData?.votesCast ?? 0),
+        turnout: Number(statsData?.turnout ?? 0),
+        activeElections: Number(statsData?.activeElections ?? 0),
+        securityEvents: Number(statsData?.securityEvents ?? 0),
+        chartData: Array.isArray(statsData?.chartData) ? statsData.chartData : [],
+        recentLogs: Array.isArray(statsData?.recentLogs) ? statsData.recentLogs : [],
+        electionTitle: typeof statsData?.electionTitle === "string" ? statsData.electionTitle : prev.electionTitle,
+      }));
+      if (Array.isArray(electionsData)) setElections(electionsData);
+      if (Array.isArray(votersData)) setVoters(votersData);
 
       setLoading(false);
     } catch (err) {
@@ -88,31 +92,63 @@ export default function AdminDashboard() {
   }, []);
 
   const handleDeleteElection = async (id: string, title: string) => {
-    if (!confirm(`Are you sure you want to permanently delete "${title}"? This will erase all candidates and votes associated with it.`)) return;
-    
+    if (!confirm(`Are you sure you want to permanently delete "${title}"?`)) return;
     try {
-        const res = await fetch(`http://localhost:5000/api/admin/election/${id}`, {
+        const res = await fetch(`${API_URL}/admin/election/${id}`, {
             method: "DELETE",
             headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
         });
         const data = await res.json();
-        if (res.ok) {
-            alert(data.message);
-            fetchAdminData();
-        } else {
-            throw new Error(data.error);
-        }
+        if (res.ok) { alert(data.message); fetchAdminData(); }
+        else throw new Error(data.error);
     } catch (err: any) {
         alert(err.message || "Failed to delete election");
     }
   };
 
+  const handleOpenElection = async (id: string, title: string) => {
+    if (!confirm(`Open "${title}" for voting now?`)) return;
+    try {
+      const res = await fetch(`${API_URL}/admin/open-election`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${localStorage.getItem("token")}`,
+        },
+        body: JSON.stringify({ electionId: id }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to open election");
+      fetchAdminData();
+    } catch (err: any) {
+      alert(err.message || "Failed to open election");
+    }
+  };
+
+  const handleCloseElection = async (id: string, title: string) => {
+    if (!confirm(`Close "${title}" and stop voting?`)) return;
+    try {
+      const res = await fetch(`${API_URL}/admin/close-election`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${localStorage.getItem("token")}`,
+        },
+        body: JSON.stringify({ electionId: id }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to close election");
+      fetchAdminData();
+    } catch (err: any) {
+      alert(err.message || "Failed to close election");
+    }
+  };
+
   const handleEmergencyHalt = async () => {
-    if (!confirm("CRITICAL: This will immediately terminate ALL active elections. This action is irreversible for current polling sessions. Proceed?")) return;
-    
+    if (!confirm("CRITICAL: This will immediately terminate ALL active elections. Proceed?")) return;
     setHalting(true);
     try {
-      const res = await fetch("http://localhost:5000/api/admin/emergency-halt", {
+      const res = await fetch(`${API_URL}/admin/emergency-halt`, {
         method: "POST",
         headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
       });
@@ -129,7 +165,7 @@ export default function AdminDashboard() {
   const openLogArchive = async () => {
     setShowLogArchive(true);
     try {
-      const res = await fetch("http://localhost:5000/api/admin/logs", {
+      const res = await fetch(`${API_URL}/admin/logs`, {
         headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
       });
       const data = await res.json();
@@ -169,8 +205,8 @@ export default function AdminDashboard() {
         {/* Overview Stats */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8 mb-16">
           {[
-            { label: "Registered Voters", val: stats.totalVoters.toLocaleString(), icon: Users, color: "text-blue-500", bg: "bg-blue-500/10", trend: "+12%" },
-            { label: "Votes Recorded", val: stats.votesCast.toLocaleString(), icon: VoteIcon, color: "text-emerald-500", bg: "bg-emerald-500/10", trend: "+5%" },
+            { label: "Registered Voters", val: (Number(stats.totalVoters) || 0).toLocaleString(), icon: Users, color: "text-blue-500", bg: "bg-blue-500/10", trend: "+12%" },
+            { label: "Votes Recorded", val: (Number(stats.votesCast) || 0).toLocaleString(), icon: VoteIcon, color: "text-emerald-500", bg: "bg-emerald-500/10", trend: "+5%" },
             { label: "Current Turnout", val: `${stats.turnout}%`, icon: TrendingUp, color: "text-indigo-500", bg: "bg-indigo-500/10", trend: "Live" },
             { label: "Security Events", val: stats.securityEvents, icon: ShieldAlert, color: "text-red-500", bg: "bg-red-500/10", trend: "Secure" }
           ].map((stat, i) => (
@@ -352,6 +388,31 @@ export default function AdminDashboard() {
                             <span className={`text-[9px] font-black px-3 py-1 rounded-full uppercase tracking-widest border ${e.status === "OPEN" ? "bg-emerald-100 text-emerald-700 border-emerald-200" : "bg-slate-200 text-slate-500 border-slate-300"}`}>
                               {e.status}
                             </span>
+                          </div>
+                          {/* Keep original card spacing; show control only on hover */}
+                          <div className="absolute bottom-6 left-6 opacity-0 group-hover:opacity-100 transition-opacity">
+                            {e.status === "DRAFT" && (
+                              <button
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  handleOpenElection(e.id, e.title);
+                                }}
+                                className="text-[10px] font-black uppercase tracking-widest text-emerald-700 bg-emerald-50 border border-emerald-100 px-3 py-1.5 rounded-full hover:bg-emerald-100 transition-colors"
+                              >
+                                Open voting
+                              </button>
+                            )}
+                            {e.status === "OPEN" && (
+                              <button
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  handleCloseElection(e.id, e.title);
+                                }}
+                                className="text-[10px] font-black uppercase tracking-widest text-slate-900 bg-white border border-slate-200 px-3 py-1.5 rounded-full hover:border-slate-900 transition-colors"
+                              >
+                                Close voting
+                              </button>
+                            )}
                           </div>
                           <div className="flex items-center justify-between">
                             <div className="flex items-center gap-2">

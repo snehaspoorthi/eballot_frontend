@@ -52,6 +52,7 @@ export default function LoginPage() {
   const handleOtpSuccess = (token: string, user: any) => {
     localStorage.setItem("token", token);
     localStorage.setItem("user", JSON.stringify(user));
+    window.dispatchEvent(new Event("auth-changed"));
     router.push("/dashboard");
     router.refresh();
   };
